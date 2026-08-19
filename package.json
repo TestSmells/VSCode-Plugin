@@ -1,0 +1,34 @@
+{
+  "name": "test-smell-detector",
+  "displayName": "Test Smell Detector",
+  "description": "Detect test smells in Java test files from Visual Studio Code.",
+  "version": "0.0.1",
+  "private": true,
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Linters"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "testSmellDetector.analyzeCurrentFile",
+        "title": "Analyze Current File",
+        "category": "Test Smell Detector"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "check": "tsc --noEmit -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.7.2"
+  }
+}

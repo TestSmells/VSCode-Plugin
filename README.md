@@ -1,7 +1,7 @@
 # Test Smell Detector for VS Code
 
-This branch contains the VS Code extension prototype from before the tsDetect
-engine was integrated.
+This repository contains a minimum VS Code extension prototype for integrating
+the Java-based Test Smell Detector (`tsDetect`).
 
 ## Current prototype
 
@@ -9,25 +9,35 @@ The extension contributes one command:
 
 - **Test Smell Detector: Analyze Current File**
 
-The command validates the active editor and identifies a saved Java file. It
-provides a clear message when there is no active editor, the active file is not
-Java, or the file has unsaved changes.
+The command validates the active editor, asks for the corresponding production
+Java file, runs the bundled tsDetect engine, and lists detected test smells in
+the **Test Smell Detector** Output panel.
 
-This branch intentionally does not include:
+This first prototype uses tsDetect's existing file-pair input format, so the
+production class must be selected manually. Automatic production-file matching
+is outside the current scope.
 
-- The compiled `tsdetect.jar`
-- Temporary CSV generation or parsing
-- Java child-process execution
-- Production-file selection
-- Test-smell result output
+## Requirements
+
+- Java must be installed and available as `java` on the system path.
+- The test and production Java files must be saved locally.
+
+If Java is installed under a different executable path, set
+`testSmellDetector.javaPath` in VS Code settings.
 
 ## Run locally
 
 1. Run `npm install`.
 2. Open this folder in VS Code.
 3. Press `F5` to open an Extension Development Host.
-4. Open a saved Java file in the new window.
-5. Run **Test Smell Detector: Analyze Current File** from the Command Palette.
+4. In the new window, open the Command Palette and run
+   **Test Smell Detector: Analyze Current File**.
+5. Open a saved Java test file and keep it as the active editor.
+6. Select the corresponding production Java file when prompted.
+7. Review the detected smells in the **Test Smell Detector** Output panel.
 
-The extension will confirm that the Java file is ready, but it will not perform
-test-smell analysis on this branch.
+## Prototype limitations
+
+- Analysis runs only when the command is invoked.
+- The production file is selected manually.
+- Results are reported at file level; there are no inline diagnostics yet.

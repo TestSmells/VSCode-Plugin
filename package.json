@@ -11,6 +11,11 @@
     "Linters"
   ],
   "main": "./out/extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false
+    }
+  },
   "contributes": {
     "commands": [
       {
@@ -18,7 +23,17 @@
         "title": "Analyze Current File",
         "category": "Test Smell Detector"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Test Smell Detector",
+      "properties": {
+        "testSmellDetector.javaPath": {
+          "type": "string",
+          "default": "java",
+          "description": "Java executable used to run the bundled tsDetect JAR."
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",

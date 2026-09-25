@@ -1,92 +1,158 @@
-// Import Node.js path tools so we can get a filename from a complete file path.
+import * as vscode from 'vscode';
 import * as path from 'node:path';
 
-// Import the VS Code API so the extension can use editors, commands, and messages.
-import * as vscode from 'vscode';
+import { runDetector } from './testSmellDetector';
 
-// Store the command's internal ID in one place to avoid repeating the string.
-// This ID must exactly match the command declared in package.json.
+// This ID must match the command contributed in package.json.
 const ANALYZE_CURRENT_FILE_COMMAND = 'testSmellDetector.analyzeCurrentFile';
 
-// VS Code calls this activate function when the user first runs our command.
-// The context object lets VS Code manage resources created by the extension.
+/**
+ * VS Code calls activate the first time the contributed command is invoked.
+ * This function owns the user-facing workflow; process execution stays in a
+ * separate module so it can be tested without launching VS Code.
+ */
 export function activate(context: vscode.ExtensionContext): void {
-  // Register the function that should run when the user selects our command.
+  const output = vscode.window.createOutputChannel('Test Smell Detector');
   const analyzeCurrentFile = vscode.commands.registerCommand(
-    // Tell VS Code which registered command this function belongs to.
     ANALYZE_CURRENT_FILE_COMMAND,
-
-    // Use an async function because showing VS Code messages returns Promises.
     async () => {
-      // Ask VS Code for the editor tab that the user is currently viewing.
       const editor = vscode.window.activeTextEditor;
 
-      // Check whether the user has any text editor open.
+      // tsDetect reads source from disk, so require an active, saved Java file
+      // before starting the detector workflow.
       if (!editor) {
-        // Show an error message when there is no active file to inspect.
         await vscode.window.showErrorMessage(
-          // Explain what the user must do before running the command again.
           'Open a Java test file before running Test Smell Detector.',
         );
-
-        // Stop this command because there is no file to inspect.
         return;
       }
 
-      // Get the document object, which contains information about the open file.
       const { document } = editor;
-
-      // Convert the full path into a short name such as CalculatorTest.java.
       const fileName = path.basename(document.fileName);
 
-      // Make sure VS Code recognizes the active document as Java source code.
       if (document.languageId !== 'java') {
-        // Warn the user that the selected file is not a Java file.
         await vscode.window.showWarningMessage(
-          // Insert the current filename into the warning with a template string.
           `${fileName} is not recognized as a Java file.`,
         );
-
-        // Stop because this prototype is intended for Java test files.
         return;
       }
 
-      // Check that the Java document is a real local file and has been named.
       if (document.uri.scheme !== 'file' || document.isUntitled) {
-        // Ask the user to save the new or non-local document before continuing.
         await vscode.window.showWarningMessage(
-          // Include the filename so the message clearly identifies the document.
           `Save ${fileName} locally before analyzing it.`,
         );
-
-        // Stop because a future detector will need a saved local file path.
         return;
       }
 
-      // Check whether the document contains changes that have not been saved.
       if (document.isDirty) {
-        // Ask the user to save so a future detector reads the newest code.
         await vscode.window.showWarningMessage(
-          // Tell the user exactly which file still has unsaved changes.
           `Save your changes to ${fileName} before analyzing it.`,
         );
-
-        // Stop until the document on disk matches the code visible in VS Code.
         return;
       }
 
-      // Confirm that the active document passed every validation check.
-      await vscode.window.showInformationMessage(
-        // Explain that this branch validates the file but does not run tsDetect.
-        `Ready to analyze ${fileName}. Detector integration is not included on this branch.`,
-      );
+      const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
+
+      // tsDetect requires a test/production pair. Automatic matching can
+      // replace this manual prompt in a future version.
+      const productionFiles = await vscode.window.showOpenDialog({
+        canSelectFiles: true,
+        canSelectFolders: false,
+        canSelectMany: false,
+        defaultUri:
+          workspaceFolder?.uri ?? vscode.Uri.file(path.dirname(document.fileName)),
+        filters: {
+          'Java source files': ['java'],
+        },
+        openLabel: 'Use as production file',
+        title: `Select the production file tested by ${fileName}`,
+      });
+
+      if (!productionFiles?.length) {
+        return;
+      }
+
+      const productionFilePath = productionFiles[0].fsPath;
+      if (productionFilePath === document.fileName) {
+        await vscode.window.showWarningMessage(
+          'Choose the production Java file, not the test file itself.',
+        );
+        return;
+      }
+
+      const javaPath = vscode.workspace
+        .getConfiguration('testSmellDetector')
+        .get<string>('javaPath', 'java');
+
+      try {
+        // Keep VS Code responsive and show visible progress while Java runs.
+        const result = await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: `Analyzing ${fileName} for test smells...`,
+          },
+          () =>
+            runDetector({
+              applicationName:
+                workspaceFolder?.name ??
+                path.basename(path.dirname(document.fileName)),
+              javaPath,
+              jarPath: context.asAbsolutePath('detector/tsdetect.jar'),
+              productionFilePath,
+              testFilePath: document.fileName,
+            }),
+        );
+
+        // This MVP reports file-level results in an Output channel. Richer
+        // source locations can later be converted into VS Code diagnostics.
+        output.clear();
+        output.appendLine('Test Smell Detector Results');
+        output.appendLine('===========================');
+        output.appendLine(`Test file: ${document.fileName}`);
+        output.appendLine(`Production file: ${productionFilePath}`);
+        output.appendLine(`Test methods: ${result.numberOfTestMethods}`);
+        output.appendLine('');
+
+        if (result.detectedSmells.length === 0) {
+          output.appendLine('No test smells detected.');
+          output.show(true);
+          await vscode.window.showInformationMessage(
+            `No test smells detected in ${fileName}.`,
+          );
+        } else {
+          output.appendLine(`Detected smells (${result.detectedSmells.length}):`);
+          for (const smell of result.detectedSmells) {
+            output.appendLine(`- ${smell}`);
+          }
+          output.show(true);
+          await vscode.window.showWarningMessage(
+            `${result.detectedSmells.length} test smell(s) detected in ${fileName}.`,
+          );
+        }
+      } catch (error: unknown) {
+        // Preserve technical details for debugging while keeping the pop-up
+        // notification short and actionable.
+        const message = error instanceof Error ? error.message : String(error);
+        output.clear();
+        output.appendLine('Test Smell Detector failed');
+        output.appendLine('==========================');
+        output.appendLine(message);
+        if (error instanceof Error && error.stack) {
+          output.appendLine('');
+          output.appendLine(error.stack);
+        }
+        output.show(true);
+
+        await vscode.window.showErrorMessage(
+          'Test smell analysis failed. See the Test Smell Detector output for details.',
+        );
+      }
     },
   );
 
-  // Give the command registration to VS Code for automatic cleanup on shutdown.
-  context.subscriptions.push(analyzeCurrentFile);
+  // VS Code disposes both resources automatically when the extension unloads.
+  context.subscriptions.push(analyzeCurrentFile, output);
 }
 
-// VS Code calls deactivate when it unloads the extension.
-// This function is empty because the prototype has no manual cleanup work.
+/** No explicit shutdown work is required for the command-based MVP. */
 export function deactivate(): void {}

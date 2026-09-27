@@ -5,6 +5,51 @@ import { runDetector } from './testSmellDetector';
 
 // This ID must match the command contributed in package.json.
 const ANALYZE_CURRENT_FILE_COMMAND = 'testSmellDetector.analyzeCurrentFile';
+const DIAGNOSTIC_SOURCE = 'Test Smell Detector';
+
+/**
+ * tsDetect currently reports smells for the complete test file rather than an
+ * exact source line. Anchor diagnostics to the declared test class so VS Code
+ * can show an honest file-level result in the Problems panel.
+ */
+function findTestClassRange(document: vscode.TextDocument): vscode.Range {
+  const source = document.getText();
+  const declaration = /\b(?:class|interface|enum|record)\s+([A-Za-z_$][\w$]*)/.exec(
+    source,
+  );
+
+  if (!declaration) {
+    return new vscode.Range(0, 0, 0, 0);
+  }
+
+  const className = declaration[1];
+  const classNameOffset =
+    declaration.index + declaration[0].lastIndexOf(className);
+
+  return new vscode.Range(
+    document.positionAt(classNameOffset),
+    document.positionAt(classNameOffset + className.length),
+  );
+}
+
+/** Convert file-level smell names into native VS Code warning diagnostics. */
+function createDiagnostics(
+  document: vscode.TextDocument,
+  detectedSmells: string[],
+): vscode.Diagnostic[] {
+  const range = findTestClassRange(document);
+
+  return detectedSmells.map((smell) => {
+    const diagnostic = new vscode.Diagnostic(
+      range,
+      `${smell} detected in this test file (file-level result).`,
+      vscode.DiagnosticSeverity.Warning,
+    );
+    diagnostic.source = DIAGNOSTIC_SOURCE;
+    diagnostic.code = smell;
+    return diagnostic;
+  });
+}
 
 /**
  * VS Code calls activate the first time the contributed command is invoked.
@@ -13,6 +58,9 @@ const ANALYZE_CURRENT_FILE_COMMAND = 'testSmellDetector.analyzeCurrentFile';
  */
 export function activate(context: vscode.ExtensionContext): void {
   const output = vscode.window.createOutputChannel('Test Smell Detector');
+  const diagnostics = vscode.languages.createDiagnosticCollection(
+    'testSmellDetector',
+  );
   const analyzeCurrentFile = vscode.commands.registerCommand(
     ANALYZE_CURRENT_FILE_COMMAND,
     async () => {
@@ -80,6 +128,11 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
 
+      // Results from an older analysis are no longer reliable once a new run
+      // starts. They will be replaced below if this analysis succeeds.
+      diagnostics.delete(document.uri);
+      const analyzedDocumentVersion = document.version;
+
       const javaPath = vscode.workspace
         .getConfiguration('testSmellDetector')
         .get<string>('javaPath', 'java');
@@ -103,8 +156,21 @@ export function activate(context: vscode.ExtensionContext): void {
             }),
         );
 
-        // This MVP reports file-level results in an Output channel. Richer
-        // source locations can later be converted into VS Code diagnostics.
+        // Do not publish results for source code that changed while the Java
+        // process was running. The user can save and run the command again.
+        if (
+          document.isClosed ||
+          document.isDirty ||
+          document.version !== analyzedDocumentVersion
+        ) {
+          await vscode.window.showWarningMessage(
+            `${fileName} changed during analysis. Save it and analyze again.`,
+          );
+          return;
+        }
+
+        // Keep the detailed run summary in the Output channel while native
+        // diagnostics provide the editor-facing Problems experience.
         output.clear();
         output.appendLine('Test Smell Detector Results');
         output.appendLine('===========================');
@@ -112,6 +178,13 @@ export function activate(context: vscode.ExtensionContext): void {
         output.appendLine(`Production file: ${productionFilePath}`);
         output.appendLine(`Test methods: ${result.numberOfTestMethods}`);
         output.appendLine('');
+
+        // Publishing diagnostics makes the smells appear in VS Code's Problems
+        // panel and adds warning squiggles at the test class declaration.
+        diagnostics.set(
+          document.uri,
+          createDiagnostics(document, result.detectedSmells),
+        );
 
         if (result.detectedSmells.length === 0) {
           output.appendLine('No test smells detected.');
@@ -125,11 +198,20 @@ export function activate(context: vscode.ExtensionContext): void {
             output.appendLine(`- ${smell}`);
           }
           output.show(true);
-          await vscode.window.showWarningMessage(
+          const selection = await vscode.window.showWarningMessage(
             `${result.detectedSmells.length} test smell(s) detected in ${fileName}.`,
+            'Open Problems',
           );
+
+          if (selection === 'Open Problems') {
+            await vscode.commands.executeCommand('workbench.actions.view.problems');
+          }
         }
       } catch (error: unknown) {
+        // Do not leave results from an earlier successful run visible after a
+        // failed analysis.
+        diagnostics.delete(document.uri);
+
         // Preserve technical details for debugging while keeping the pop-up
         // notification short and actionable.
         const message = error instanceof Error ? error.message : String(error);
@@ -150,8 +232,22 @@ export function activate(context: vscode.ExtensionContext): void {
     },
   );
 
-  // VS Code disposes both resources automatically when the extension unloads.
-  context.subscriptions.push(analyzeCurrentFile, output);
+  // Editing or closing a document invalidates its last file-level result.
+  const clearDiagnosticsOnChange = vscode.workspace.onDidChangeTextDocument(
+    ({ document }) => diagnostics.delete(document.uri),
+  );
+  const clearDiagnosticsOnClose = vscode.workspace.onDidCloseTextDocument(
+    (document) => diagnostics.delete(document.uri),
+  );
+
+  // VS Code disposes all registered resources when the extension unloads.
+  context.subscriptions.push(
+    analyzeCurrentFile,
+    output,
+    diagnostics,
+    clearDiagnosticsOnChange,
+    clearDiagnosticsOnClose,
+  );
 }
 
 /** No explicit shutdown work is required for the command-based MVP. */

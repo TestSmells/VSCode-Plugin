@@ -11,6 +11,9 @@
     "Linters"
   ],
   "main": "./out/extension.js",
+  "activationEvents": [
+    "onLanguage:java"
+  ],
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": false
@@ -31,6 +34,11 @@
           "type": "string",
           "default": "java",
           "description": "Java executable used to run the bundled tsDetect JAR."
+        },
+        "testSmellDetector.analyzeOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically analyze saved Java test files and refresh their diagnostics."
         }
       }
     }

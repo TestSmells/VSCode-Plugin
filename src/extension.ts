@@ -1,158 +1,132 @@
 import * as vscode from 'vscode';
 import * as path from 'node:path';
-
 import { runDetector } from './testSmellDetector';
 
-// This ID must match the command contributed in package.json.
-const ANALYZE_CURRENT_FILE_COMMAND = 'testSmellDetector.analyzeCurrentFile';
+const COMMAND = 'testSmellDetector.analyzeCurrentFile';
+const SOURCE = 'Test Smell Detector';
 
-/**
- * VS Code calls activate the first time the contributed command is invoked.
- * This function owns the user-facing workflow; process execution stays in a
- * separate module so it can be tested without launching VS Code.
- */
 export function activate(context: vscode.ExtensionContext): void {
-  const output = vscode.window.createOutputChannel('Test Smell Detector');
-  const analyzeCurrentFile = vscode.commands.registerCommand(
-    ANALYZE_CURRENT_FILE_COMMAND,
-    async () => {
-      const editor = vscode.window.activeTextEditor;
+  const output = vscode.window.createOutputChannel(SOURCE);
+  const diagnostics = vscode.languages.createDiagnosticCollection('testSmellDetector');
+  const timers = new Map<string, ReturnType<typeof setTimeout>>();
+  const generations = new Map<string, number>();
+  const findings = new Map<string, { range: vscode.Range; names: string[] }>();
+  const key = (uri: vscode.Uri) => uri.toString();
+  const isJavaTest = (doc: vscode.TextDocument) => doc.languageId === 'java' && doc.uri.scheme === 'file' && /(?:Test|Tests|IT|Spec)\.java$/i.test(path.basename(doc.fileName));
 
-      // tsDetect reads source from disk, so require an active, saved Java file
-      // before starting the detector workflow.
-      if (!editor) {
-        await vscode.window.showErrorMessage(
-          'Open a Java test file before running Test Smell Detector.',
-        );
-        return;
-      }
+  async function productionFile(doc: vscode.TextDocument): Promise<string | undefined> {
+    const name = path.basename(doc.fileName).replace(/(?:Tests|Test|IT|Spec)\.java$/i, '.java');
+    const folder = vscode.workspace.getWorkspaceFolder(doc.uri);
+    if (!folder) return undefined;
+    const hits = await vscode.workspace.findFiles(new vscode.RelativePattern(folder, `**/${name}`), '**/{target,build,out,node_modules}/**', 30);
+    const candidates = hits.filter(uri => uri.fsPath !== doc.fileName);
+    // Prefer an adjacent src/main path, then the shortest candidate path.
+    candidates.sort((a, b) => Number(/[/\\]src[/\\]main[/\\]/.test(b.fsPath)) - Number(/[/\\]src[/\\]main[/\\]/.test(a.fsPath)) || a.fsPath.length - b.fsPath.length);
+    return candidates[0]?.fsPath;
+  }
 
-      const { document } = editor;
-      const fileName = path.basename(document.fileName);
+  function clear(doc: vscode.TextDocument): void {
+    const id = key(doc.uri);
+    clearTimeout(timers.get(id));
+    timers.delete(id);
+    generations.set(id, (generations.get(id) ?? 0) + 1);
+    diagnostics.delete(doc.uri);
+    findings.delete(id);
+  }
 
-      if (document.languageId !== 'java') {
-        await vscode.window.showWarningMessage(
-          `${fileName} is not recognized as a Java file.`,
-        );
-        return;
-      }
+  function reportFailure(error: unknown, doc: vscode.TextDocument, interactive: boolean): void {
+    output.appendLine(`${doc.fileName}: ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
+    if (interactive) {
+      output.show(true);
+      void vscode.window.showErrorMessage('Test smell analysis failed. See Test Smell Detector output.');
+    }
+  }
 
-      if (document.uri.scheme !== 'file' || document.isUntitled) {
-        await vscode.window.showWarningMessage(
-          `Save ${fileName} locally before analyzing it.`,
-        );
-        return;
-      }
-
-      if (document.isDirty) {
-        await vscode.window.showWarningMessage(
-          `Save your changes to ${fileName} before analyzing it.`,
-        );
-        return;
-      }
-
-      const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
-
-      // tsDetect requires a test/production pair. Automatic matching can
-      // replace this manual prompt in a future version.
-      const productionFiles = await vscode.window.showOpenDialog({
-        canSelectFiles: true,
-        canSelectFolders: false,
-        canSelectMany: false,
-        defaultUri:
-          workspaceFolder?.uri ?? vscode.Uri.file(path.dirname(document.fileName)),
-        filters: {
-          'Java source files': ['java'],
-        },
-        openLabel: 'Use as production file',
-        title: `Select the production file tested by ${fileName}`,
+  async function analyze(doc: vscode.TextDocument, interactive: boolean): Promise<void> {
+    if (!isJavaTest(doc)) {
+      if (interactive) void vscode.window.showWarningMessage('Open a saved Java test file such as ExampleTest.java.');
+      return;
+    }
+    clear(doc);
+    const id = key(doc.uri);
+    const generation = generations.get(id)!;
+    if (doc.isDirty) {
+      if (interactive) void vscode.window.showWarningMessage('Save the Java test file before analyzing it.');
+      return;
+    }
+    let production = await productionFile(doc);
+    if (!production && interactive) {
+      const selected = await vscode.window.showOpenDialog({ canSelectMany: false, filters: { 'Java files': ['java'] }, title: 'Select the production file for this test' });
+      production = selected?.[0]?.fsPath;
+    }
+    if (!production) {
+      output.appendLine(`Skipped ${doc.fileName}: no matching production Java file found.`);
+      return;
+    }
+    if (generation !== generations.get(id) || doc.isClosed || doc.isDirty) return;
+    try {
+      const run = () => runDetector({
+        applicationName: vscode.workspace.getWorkspaceFolder(doc.uri)?.name ?? path.basename(path.dirname(doc.fileName)),
+        javaPath: vscode.workspace.getConfiguration('testSmellDetector', doc.uri).get('javaPath', 'java'),
+        jarPath: context.asAbsolutePath('detector/tsdetect.jar'),
+        testFilePath: doc.fileName,
+        productionFilePath: production,
       });
+      const result = interactive
+        ? await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Analyzing ${path.basename(doc.fileName)}...` }, run)
+        : await run();
+      if (generation !== generations.get(id) || doc.isClosed || doc.isDirty) return;
+      // The JAR reports smells at file level; anchor findings to the class name,
+      // without pretending it provided exact offending expressions or lines.
+      const match = /\b(?:class|interface|enum|record)\s+([A-Za-z_$][\w$]*)/.exec(doc.getText());
+      const range = match
+        ? new vscode.Range(doc.positionAt(match.index + match[0].length - match[1].length), doc.positionAt(match.index + match[0].length))
+        : doc.lineAt(0).range;
+      const entries = result.detectedSmells.map(name => {
+        const diagnostic = new vscode.Diagnostic(range, `${name} detected in this test file (file-level result).`, vscode.DiagnosticSeverity.Warning);
+        diagnostic.source = SOURCE;
+        diagnostic.code = name;
+        return diagnostic;
+      });
+      diagnostics.set(doc.uri, entries);
+      if (entries.length) findings.set(id, { range, names: result.detectedSmells });
+      output.appendLine(`${doc.fileName}: ${result.numberOfTestMethods} test method(s), ${entries.length} smell(s)${entries.length ? `: ${result.detectedSmells.join(', ')}` : ''}`);
+      if (interactive) void vscode.window.showInformationMessage(`Analysis complete: ${entries.length} test smell(s). Open Problems to inspect results.`);
+    } catch (error) {
+      if (generation === generations.get(id)) reportFailure(error, doc, interactive);
+    }
+  }
 
-      if (!productionFiles?.length) {
-        return;
-      }
+  function schedule(doc: vscode.TextDocument): void {
+    if (!isJavaTest(doc)) return;
+    clear(doc);
+    const id = key(doc.uri);
+    if (!vscode.workspace.getConfiguration('testSmellDetector', doc.uri).get('analyzeOnSave', true)) return;
+    timers.set(id, setTimeout(() => { timers.delete(id); void analyze(doc, false); }, 500));
+  }
 
-      const productionFilePath = productionFiles[0].fsPath;
-      if (productionFilePath === document.fileName) {
-        await vscode.window.showWarningMessage(
-          'Choose the production Java file, not the test file itself.',
-        );
-        return;
-      }
-
-      const javaPath = vscode.workspace
-        .getConfiguration('testSmellDetector')
-        .get<string>('javaPath', 'java');
-
-      try {
-        // Keep VS Code responsive and show visible progress while Java runs.
-        const result = await vscode.window.withProgress(
-          {
-            location: vscode.ProgressLocation.Notification,
-            title: `Analyzing ${fileName} for test smells...`,
-          },
-          () =>
-            runDetector({
-              applicationName:
-                workspaceFolder?.name ??
-                path.basename(path.dirname(document.fileName)),
-              javaPath,
-              jarPath: context.asAbsolutePath('detector/tsdetect.jar'),
-              productionFilePath,
-              testFilePath: document.fileName,
-            }),
-        );
-
-        // This MVP reports file-level results in an Output channel. Richer
-        // source locations can later be converted into VS Code diagnostics.
-        output.clear();
-        output.appendLine('Test Smell Detector Results');
-        output.appendLine('===========================');
-        output.appendLine(`Test file: ${document.fileName}`);
-        output.appendLine(`Production file: ${productionFilePath}`);
-        output.appendLine(`Test methods: ${result.numberOfTestMethods}`);
-        output.appendLine('');
-
-        if (result.detectedSmells.length === 0) {
-          output.appendLine('No test smells detected.');
-          output.show(true);
-          await vscode.window.showInformationMessage(
-            `No test smells detected in ${fileName}.`,
-          );
-        } else {
-          output.appendLine(`Detected smells (${result.detectedSmells.length}):`);
-          for (const smell of result.detectedSmells) {
-            output.appendLine(`- ${smell}`);
-          }
-          output.show(true);
-          await vscode.window.showWarningMessage(
-            `${result.detectedSmells.length} test smell(s) detected in ${fileName}.`,
-          );
-        }
-      } catch (error: unknown) {
-        // Preserve technical details for debugging while keeping the pop-up
-        // notification short and actionable.
-        const message = error instanceof Error ? error.message : String(error);
-        output.clear();
-        output.appendLine('Test Smell Detector failed');
-        output.appendLine('==========================');
-        output.appendLine(message);
-        if (error instanceof Error && error.stack) {
-          output.appendLine('');
-          output.appendLine(error.stack);
-        }
-        output.show(true);
-
-        await vscode.window.showErrorMessage(
-          'Test smell analysis failed. See the Test Smell Detector output for details.',
-        );
-      }
-    },
+  context.subscriptions.push(
+    output, diagnostics,
+    vscode.commands.registerCommand(COMMAND, () => {
+      const doc = vscode.window.activeTextEditor?.document;
+      if (doc) return analyze(doc, true);
+      return vscode.window.showWarningMessage('Open a Java test file first.');
+    }),
+    vscode.workspace.onDidSaveTextDocument(schedule),
+    vscode.workspace.onDidChangeTextDocument(event => { if (isJavaTest(event.document)) clear(event.document); }),
+    vscode.workspace.onDidCloseTextDocument(clear),
+    vscode.window.onDidChangeActiveTextEditor(editor => { if (editor && isJavaTest(editor.document)) schedule(editor.document); }),
+    vscode.languages.registerHoverProvider({ language: 'java', scheme: 'file' }, {
+      provideHover(doc, position) {
+        const item = findings.get(key(doc.uri));
+        if (!item?.range.contains(position)) return undefined;
+        const markdown = new vscode.MarkdownString(`**Test smells in this file**\n\n${item.names.map(name => `- ${name}`).join('\n')}\n\nTSDetect reports file-level findings; this location marks the test class.`);
+        return new vscode.Hover(markdown, item.range);
+      },
+    }),
+    { dispose: () => { for (const timer of timers.values()) clearTimeout(timer); } },
   );
-
-  // VS Code disposes both resources automatically when the extension unloads.
-  context.subscriptions.push(analyzeCurrentFile, output);
+  if (vscode.window.activeTextEditor) schedule(vscode.window.activeTextEditor.document);
 }
 
-/** No explicit shutdown work is required for the command-based MVP. */
 export function deactivate(): void {}

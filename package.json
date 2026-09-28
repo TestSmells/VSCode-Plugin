@@ -1,8 +1,8 @@
 {
   "name": "test-smell-detector",
   "displayName": "Test Smell Detector",
-  "description": "Detect test smells in Java test files from Visual Studio Code.",
-  "version": "0.0.1",
+  "description": "Analyze Java test files with TSDetect, inline diagnostics and Problems integration.",
+  "version": "0.1.0",
   "private": true,
   "engines": {
     "vscode": "^1.90.0"
@@ -11,39 +11,49 @@
     "Linters"
   ],
   "main": "./out/extension.js",
-  "capabilities": {
-    "untrustedWorkspaces": {
-      "supported": false
-    }
-  },
+  "activationEvents": [
+    "onLanguage:java"
+  ],
   "contributes": {
     "commands": [
       {
         "command": "testSmellDetector.analyzeCurrentFile",
-        "title": "Analyze Current File",
-        "category": "Test Smell Detector"
+        "title": "Test Smell Detector: Analyze Current File"
       }
     ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "testSmellDetector.analyzeCurrentFile",
+          "when": "resourceExtname == .java",
+          "group": "navigation"
+        }
+      ]
+    },
     "configuration": {
       "title": "Test Smell Detector",
       "properties": {
         "testSmellDetector.javaPath": {
           "type": "string",
           "default": "java",
-          "description": "Java executable used to run the bundled tsDetect JAR."
+          "description": "Path to Java executable (Java 11 or newer)."
+        },
+        "testSmellDetector.analyzeOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Analyze Java test files after save and when opened."
         }
       }
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "check": "tsc --noEmit -p ./"
+    "test": "npm run compile"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
+    "@types/node": "^20.19.43",
     "@types/vscode": "^1.90.0",
-    "typescript": "^5.7.2"
+    "typescript": "^5.6.0"
   }
 }

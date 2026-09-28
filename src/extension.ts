@@ -58,6 +58,10 @@ export function activate(context: vscode.ExtensionContext): void {
     if (!production && interactive) {
       const selected = await vscode.window.showOpenDialog({ canSelectMany: false, filters: { 'Java files': ['java'] }, title: 'Select the production file for this test' });
       production = selected?.[0]?.fsPath;
+      if (production === doc.fileName) {
+        void vscode.window.showWarningMessage('Choose the production Java file, not the test file itself.');
+        return;
+      }
     }
     if (!production) {
       output.appendLine(`Skipped ${doc.fileName}: no matching production Java file found.`);
@@ -90,8 +94,27 @@ export function activate(context: vscode.ExtensionContext): void {
       });
       diagnostics.set(doc.uri, entries);
       if (entries.length) findings.set(id, { range, names: result.detectedSmells });
-      output.appendLine(`${doc.fileName}: ${result.numberOfTestMethods} test method(s), ${entries.length} smell(s)${entries.length ? `: ${result.detectedSmells.join(', ')}` : ''}`);
-      if (interactive) void vscode.window.showInformationMessage(`Analysis complete: ${entries.length} test smell(s). Open Problems to inspect results.`);
+      if (interactive) {
+        output.clear();
+        output.appendLine('Test Smell Detector Results');
+        output.appendLine('===========================');
+        output.appendLine(`Test file: ${doc.fileName}`);
+        output.appendLine(`Production file: ${production}`);
+        output.appendLine(`Test methods: ${result.numberOfTestMethods}`);
+        output.appendLine('');
+        output.appendLine(entries.length ? `Detected smells (${entries.length}):` : 'No test smells detected.');
+        for (const name of result.detectedSmells) output.appendLine(`- ${name}`);
+        output.show(true);
+        const selection = await vscode.window.showInformationMessage(
+          `Analysis complete: ${entries.length} test smell(s).`,
+          'Open Problems',
+        );
+        if (selection === 'Open Problems') {
+          await vscode.commands.executeCommand('workbench.actions.view.problems');
+        }
+      } else {
+        output.appendLine(`${doc.fileName}: ${result.numberOfTestMethods} test method(s), ${entries.length} smell(s)${entries.length ? `: ${result.detectedSmells.join(', ')}` : ''}`);
+      }
     } catch (error) {
       if (generation === generations.get(id)) reportFailure(error, doc, interactive);
     }

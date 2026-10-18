@@ -10,7 +10,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const diagnostics = vscode.languages.createDiagnosticCollection('testSmellDetector');
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
   const generations = new Map<string, number>();
-  const findings = new Map<string, { range: vscode.Range; names: string[] }>();
+  const findings = new Map<string, { range: vscode.Range; message: string }[]>();
   const key = (uri: vscode.Uri) => uri.toString();
   const isJavaTest = (doc: vscode.TextDocument) => doc.languageId === 'java' && doc.uri.scheme === 'file' && /(?:Test|Tests|IT|Spec)\.java$/i.test(path.basename(doc.fileName));
 
@@ -80,20 +80,35 @@ export function activate(context: vscode.ExtensionContext): void {
         ? await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Analyzing ${path.basename(doc.fileName)}...` }, run)
         : await run();
       if (generation !== generations.get(id) || doc.isClosed || doc.isDirty) return;
-      // The JAR reports smells at file level; anchor findings to the class name,
-      // without pretending it provided exact offending expressions or lines.
+      // Method ranges come from the Java parser, matched to engine-confirmed elements.
       const match = /\b(?:class|interface|enum|record)\s+([A-Za-z_$][\w$]*)/.exec(doc.getText());
-      const range = match
+      const fallbackRange = match
         ? new vscode.Range(doc.positionAt(match.index + match[0].length - match[1].length), doc.positionAt(match.index + match[0].length))
         : doc.lineAt(0).range;
-      const entries = result.detectedSmells.map(name => {
-        const diagnostic = new vscode.Diagnostic(range, `${name} detected in this test file (file-level result).`, vscode.DiagnosticSeverity.Warning);
+      const hoverItems: { range: vscode.Range; message: string }[] = [];
+      const entries = result.findings.map(finding => {
+        let range = fallbackRange;
+        let located = false;
+        const location = finding.location;
+        if (location && location.startLine <= doc.lineCount && location.endLine <= doc.lineCount
+          && location.startColumn - 1 <= doc.lineAt(location.startLine - 1).text.length
+          && location.endColumn - 1 <= doc.lineAt(location.endLine - 1).text.length) {
+          range = new vscode.Range(location.startLine - 1, location.startColumn - 1,
+            location.endLine - 1, location.endColumn - 1);
+          located = true;
+        }
+        const detail = located
+          ? `${finding.scope === 'method' ? 'Method' : 'Class'}: ${finding.elementName}. The underline marks the declaration, not an exact offending statement.`
+          : 'File-level result. A unique declaration location is unavailable.';
+        const message = `${finding.name} detected. ${detail}`;
+        const diagnostic = new vscode.Diagnostic(range, message, vscode.DiagnosticSeverity.Warning);
         diagnostic.source = SOURCE;
-        diagnostic.code = name;
+        diagnostic.code = finding.name;
+        hoverItems.push({ range, message });
         return diagnostic;
       });
       diagnostics.set(doc.uri, entries);
-      if (entries.length) findings.set(id, { range, names: result.detectedSmells });
+      if (hoverItems.length) findings.set(id, hoverItems);
       if (interactive) {
         output.clear();
         output.appendLine('Test Smell Detector Results');
@@ -102,11 +117,14 @@ export function activate(context: vscode.ExtensionContext): void {
         output.appendLine(`Production file: ${production}`);
         output.appendLine(`Test methods: ${result.numberOfTestMethods}`);
         output.appendLine('');
-        output.appendLine(entries.length ? `Detected smells (${entries.length}):` : 'No test smells detected.');
+        output.appendLine(entries.length ? `Detected smell types (${result.detectedSmells.length}):` : 'No test smells detected.');
         for (const name of result.detectedSmells) output.appendLine(`- ${name}`);
+        for (const finding of result.findings) {
+          output.appendLine(`  ${finding.name}: ${finding.scope} ${finding.elementName}${finding.location ? ` at line ${finding.location.startLine}` : ''}`);
+        }
         output.show(true);
         const selection = await vscode.window.showInformationMessage(
-          `Analysis complete: ${entries.length} test smell(s).`,
+          `Analysis complete: ${result.detectedSmells.length} smell type(s), ${entries.length} finding(s).`,
           'Open Problems',
         );
         if (selection === 'Open Problems') {
@@ -141,10 +159,15 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.window.onDidChangeActiveTextEditor(editor => { if (editor && isJavaTest(editor.document)) schedule(editor.document); }),
     vscode.languages.registerHoverProvider({ language: 'java', scheme: 'file' }, {
       provideHover(doc, position) {
-        const item = findings.get(key(doc.uri));
-        if (!item?.range.contains(position)) return undefined;
-        const markdown = new vscode.MarkdownString(`**Test smells in this file**\n\n${item.names.map(name => `- ${name}`).join('\n')}\n\nTSDetect reports file-level findings; this location marks the test class.`);
-        return new vscode.Hover(markdown, item.range);
+        const items = findings.get(key(doc.uri))?.filter(item => item.range.contains(position));
+        if (!items?.length) return undefined;
+        const markdown = new vscode.MarkdownString();
+        markdown.appendMarkdown('**Test smell findings**\n\n');
+        for (const item of items) {
+          markdown.appendText(item.message);
+          markdown.appendMarkdown('\n\n');
+        }
+        return new vscode.Hover(markdown, items[0].range);
       },
     }),
     { dispose: () => { for (const timer of timers.values()) clearTimeout(timer); } },

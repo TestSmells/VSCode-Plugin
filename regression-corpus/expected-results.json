@@ -1,0 +1,158 @@
+{
+  "$schema": "./expected-results.schema.json",
+  "schemaVersion": 1,
+  "detector": {
+    "name": "tsDetect",
+    "sourceCommit": "e89ce1a28d56db314d159e8957591aef6002173d"
+  },
+  "normalization": {
+    "smellOrder": "alphabetical",
+    "duplicates": "removed",
+    "paths": "repository-relative-posix"
+  },
+  "cases": [
+    {
+      "id": "01-junit4-magic-number",
+      "purpose": "Known Magic Number Test result using JUnit 4.",
+      "framework": "junit4",
+      "testFile": "cases/01-junit4-magic-number/DiscountTest.java",
+      "productionFile": "cases/01-junit4-magic-number/Discount.java",
+      "expected": {
+        "status": "success",
+        "testMethods": 1,
+        "smells": [
+          "Magic Number Test"
+        ]
+      }
+    },
+    {
+      "id": "02-junit5-magic-number",
+      "purpose": "Known Magic Number Test result using JUnit 5.",
+      "framework": "junit5",
+      "testFile": "cases/02-junit5-magic-number/CalculatorTest.java",
+      "productionFile": "cases/02-junit5-magic-number/Calculator.java",
+      "expected": {
+        "status": "success",
+        "testMethods": 1,
+        "smells": [
+          "Magic Number Test"
+        ]
+      }
+    },
+    {
+      "id": "03-junit5-no-smell",
+      "purpose": "Minimal JUnit 5 baseline with no reported smells.",
+      "framework": "junit5",
+      "testFile": "cases/03-junit5-no-smell/GreeterTest.java",
+      "productionFile": "cases/03-junit5-no-smell/Greeter.java",
+      "expected": {
+        "status": "success",
+        "testMethods": 1,
+        "smells": []
+      }
+    },
+    {
+      "id": "04-junit4-assertion-roulette",
+      "purpose": "Several assertions without messages exercise Assertion Roulette detection.",
+      "framework": "junit4",
+      "testFile": "cases/04-junit4-assertion-roulette/AccountTest.java",
+      "productionFile": "cases/04-junit4-assertion-roulette/Account.java",
+      "expected": {
+        "status": "success",
+        "testMethods": 1,
+        "smells": [
+          "Assertion Roulette",
+          "Eager Test",
+          "Magic Number Test"
+        ]
+      }
+    },
+    {
+      "id": "05-junit5-unknown-test",
+      "purpose": "A test without an assertion exercises Unknown Test detection.",
+      "framework": "junit5",
+      "testFile": "cases/05-junit5-unknown-test/CounterTest.java",
+      "productionFile": "cases/05-junit5-unknown-test/Counter.java",
+      "expected": {
+        "status": "success",
+        "testMethods": 1,
+        "smells": [
+          "Eager Test",
+          "Magic Number Test",
+          "Unknown Test"
+        ]
+      }
+    },
+    {
+      "id": "06-junit5-lazy-test",
+      "purpose": "Two tests call the same production method to exercise Lazy Test detection.",
+      "framework": "junit5",
+      "testFile": "cases/06-junit5-lazy-test/FormatterTest.java",
+      "productionFile": "cases/06-junit5-lazy-test/Formatter.java",
+      "expected": {
+        "status": "success",
+        "testMethods": 2,
+        "smells": [
+          "Lazy Test",
+          "Magic Number Test"
+        ]
+      }
+    },
+    {
+      "id": "07-conventional-test-name",
+      "purpose": "Confirms the conventional ClassNameTest.java naming pattern is accepted.",
+      "framework": "junit5",
+      "testFile": "cases/07-conventional-test-name/OrderTest.java",
+      "productionFile": "cases/07-conventional-test-name/Order.java",
+      "expected": {
+        "status": "success",
+        "testMethods": 1,
+        "smells": [
+          "Magic Number Test"
+        ]
+      }
+    },
+    {
+      "id": "08-alternative-it-name",
+      "purpose": "Confirms the alternative ClassNameIT.java naming pattern can be analyzed.",
+      "framework": "junit4",
+      "testFile": "cases/08-alternative-it-name/InventoryIT.java",
+      "productionFile": "cases/08-alternative-it-name/Inventory.java",
+      "expected": {
+        "status": "success",
+        "testMethods": 1,
+        "smells": [
+          "Magic Number Test"
+        ]
+      }
+    },
+    {
+      "id": "09-malformed-input",
+      "purpose": "Documents the stable error category for malformed Java source.",
+      "framework": "junit5",
+      "testFile": "cases/09-malformed-input/BrokenServiceTest.java",
+      "productionFile": "cases/09-malformed-input/BrokenService.java",
+      "expected": {
+        "status": "error",
+        "category": "malformed-input",
+        "messageContains": [
+          "ParseProblemException"
+        ]
+      }
+    },
+    {
+      "id": "10-special-path",
+      "purpose": "Confirms test and production paths containing spaces are passed safely.",
+      "framework": "junit5",
+      "testFile": "cases/10-path with spaces/PathServiceTest.java",
+      "productionFile": "cases/10-path with spaces/PathService.java",
+      "expected": {
+        "status": "success",
+        "testMethods": 1,
+        "smells": [
+          "Magic Number Test"
+        ]
+      }
+    }
+  ]
+}

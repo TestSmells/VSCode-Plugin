@@ -2,6 +2,7 @@
 .github/**
 src/**
 scripts/**
+java/**
 regression-corpus/**
 .gitignore
 tsconfig.json

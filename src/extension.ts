@@ -6,7 +6,7 @@ import {
   isLikelyJavaTestDocument,
   ProductionFileResolver,
 } from './productionFileResolver';
-import { runDetector } from './testSmellDetector';
+import { DetectorFinding, runDetector } from './testSmellDetector';
 
 const ANALYZE_CURRENT_FILE_COMMAND = 'testSmellDetector.analyzeCurrentFile';
 const DIAGNOSTIC_SOURCE = 'Test Smell Detector';
@@ -18,9 +18,8 @@ interface AnalysisRequest {
 }
 
 /**
- * tsDetect currently reports smells for the complete test file rather than an
- * exact source line. Anchor diagnostics to the declared test class so VS Code
- * can show an honest file-level result in the Problems panel.
+ * Find the declared test class for findings that do not have one unambiguous
+ * method or class location.
  */
 function findTestClassRange(document: vscode.TextDocument): vscode.Range {
   const source = document.getText();
@@ -42,21 +41,71 @@ function findTestClassRange(document: vscode.TextDocument): vscode.Range {
   );
 }
 
-/** Convert file-level smell names into native VS Code warning diagnostics. */
+/** Convert a one-based bridge location into a validated VS Code range. */
+function getFindingRange(
+  document: vscode.TextDocument,
+  finding: DetectorFinding,
+): vscode.Range | undefined {
+  const location = finding.location;
+  if (!location) {
+    return undefined;
+  }
+
+  const startLine = location.startLine - 1;
+  const startCharacter = location.startColumn - 1;
+  const endLine = location.endLine - 1;
+  const endCharacter = location.endColumn - 1;
+
+  if (
+    startLine < 0 ||
+    endLine < startLine ||
+    endLine >= document.lineCount ||
+    startCharacter < 0 ||
+    endCharacter < 0 ||
+    startCharacter > document.lineAt(startLine).text.length ||
+    endCharacter > document.lineAt(endLine).text.length ||
+    (startLine === endLine && endCharacter <= startCharacter)
+  ) {
+    return undefined;
+  }
+
+  return new vscode.Range(
+    startLine,
+    startCharacter,
+    endLine,
+    endCharacter,
+  );
+}
+
+/** Convert engine findings into native VS Code warning diagnostics. */
 function createDiagnostics(
   document: vscode.TextDocument,
+  findings: DetectorFinding[],
   detectedSmells: string[],
 ): vscode.Diagnostic[] {
-  const range = findTestClassRange(document);
+  const fallbackRange = findTestClassRange(document);
+  const displayFindings: DetectorFinding[] =
+    findings.length > 0
+      ? findings
+      : detectedSmells.map((name) => ({
+          name,
+          scope: 'file',
+          elementName: '',
+        }));
 
-  return detectedSmells.map((smell) => {
+  return displayFindings.map((finding) => {
+    const mappedRange = getFindingRange(document, finding);
+    const range = mappedRange ?? fallbackRange;
+    const message = mappedRange
+      ? `${finding.name} detected in ${finding.scope} ${finding.elementName}. The underline marks the affected declaration.`
+      : `${finding.name} detected in this test file (exact source location unavailable).`;
     const diagnostic = new vscode.Diagnostic(
       range,
-      `${smell} detected in this test file (file-level result).`,
+      message,
       vscode.DiagnosticSeverity.Warning,
     );
     diagnostic.source = DIAGNOSTIC_SOURCE;
-    diagnostic.code = smell;
+    diagnostic.code = finding.name;
     return diagnostic;
   });
 }
@@ -214,7 +263,11 @@ export function activate(context: vscode.ExtensionContext): void {
       } else {
         diagnostics.set(
           document.uri,
-          createDiagnostics(document, result.detectedSmells),
+          createDiagnostics(
+            document,
+            result.findings,
+            result.detectedSmells,
+          ),
         );
       }
 
@@ -240,10 +293,18 @@ export function activate(context: vscode.ExtensionContext): void {
           for (const smell of result.detectedSmells) {
             output.appendLine(`- ${smell}`);
           }
+          output.appendLine('');
+          output.appendLine(`Mapped findings (${result.findings.length}):`);
+          for (const finding of result.findings) {
+            const mappedElement = finding.location
+              ? `${finding.scope} ${finding.elementName} at line ${finding.location.startLine}`
+              : 'file level (exact declaration unavailable)';
+            output.appendLine(`- ${finding.name}: ${mappedElement}`);
+          }
           output.show(true);
           void vscode.window
             .showWarningMessage(
-              `${result.detectedSmells.length} test smell(s) detected in ${fileName}.`,
+              `${result.findings.length} test smell finding(s) detected in ${fileName}.`,
               'Open Problems',
             )
             .then((selection) => {
@@ -256,7 +317,7 @@ export function activate(context: vscode.ExtensionContext): void {
         }
       } else {
         reportAutomaticMessage(
-          `${fileName}: ${result.numberOfTestMethods} test method(s), ${result.detectedSmells.length} smell(s).`,
+          `${fileName}: ${result.numberOfTestMethods} test method(s), ${result.findings.length} smell finding(s).`,
         );
       }
     } catch (error: unknown) {

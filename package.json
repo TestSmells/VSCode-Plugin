@@ -3,6 +3,12 @@
   "displayName": "Test Smell Detector",
   "description": "Detect test smells in Java test files from Visual Studio Code.",
   "version": "0.0.1",
+  "publisher": "testsmells",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TestSmells/VSCode-Plugin.git"
+  },
   "private": true,
   "engines": {
     "vscode": "^1.90.0"
@@ -37,13 +43,17 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
+    "clean": "node scripts/clean-out.js",
+    "compile": "npm run clean && tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "check": "tsc --noEmit -p ./"
+    "check": "tsc --noEmit -p ./",
+    "test:corpus": "node scripts/run-regression-corpus.js",
+    "package:vsix": "vsce package --out test-smell-detector.vsix"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^4.0.0",
     "typescript": "^5.7.2"
   }
 }

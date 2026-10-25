@@ -64,6 +64,29 @@ If Java is installed under a different executable path, set
 - Removes stale diagnostics as soon as a Java file changes.
 - Can be disabled through the `testSmellDetector.analyzeOnSave` setting.
 
+## Automated checks
+
+The GitHub Actions workflow runs for pull requests targeting `main`, pushes to
+`main`, and manual workflow runs. It installs dependencies with `npm ci`,
+type-checks and compiles the TypeScript extension, compares all regression
+fixtures with their expected tsDetect results, and builds an installable VSIX.
+
+The same checks can be run locally with Node.js 22 or newer and Java 11 or
+newer:
+
+```sh
+npm ci
+npm run check
+npm run compile
+npm run test:corpus
+npm run package:vsix
+```
+
+`npm run test:corpus` expects the compiled adapter in `out/`, so run
+`npm run compile` first. The packaging command creates
+`test-smell-detector.vsix`. In GitHub Actions, that file is retained as the
+`test-smell-detector-vsix` workflow artifact.
+
 ## Prototype limitations
 
 - Production-file matching follows common project and filename conventions;

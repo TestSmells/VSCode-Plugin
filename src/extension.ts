@@ -118,7 +118,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
     if (document.languageId !== 'java') {
       if (request.interactive) {
-        await vscode.window.showWarningMessage(
+        void vscode.window.showWarningMessage(
           `${fileName} is not recognized as a Java file.`,
         );
       }
@@ -127,7 +127,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
     if (document.uri.scheme !== 'file' || document.isUntitled) {
       if (request.interactive) {
-        await vscode.window.showWarningMessage(
+        void vscode.window.showWarningMessage(
           `Save ${fileName} locally before analyzing it.`,
         );
       }
@@ -136,7 +136,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
     if (document.isDirty) {
       if (request.interactive) {
-        await vscode.window.showWarningMessage(
+        void vscode.window.showWarningMessage(
           `Save your changes to ${fileName} before analyzing it.`,
         );
       }
@@ -202,7 +202,7 @@ export function activate(context: vscode.ExtensionContext): void {
         )
       ) {
         if (request.interactive && !document.isClosed) {
-          await vscode.window.showWarningMessage(
+          void vscode.window.showWarningMessage(
             `${fileName} changed during analysis. Save it and analyze again.`,
           );
         }
@@ -230,7 +230,7 @@ export function activate(context: vscode.ExtensionContext): void {
         if (result.detectedSmells.length === 0) {
           output.appendLine('No test smells detected.');
           output.show(true);
-          await vscode.window.showInformationMessage(
+          void vscode.window.showInformationMessage(
             `No test smells detected in ${fileName}.`,
           );
         } else {
@@ -241,15 +241,18 @@ export function activate(context: vscode.ExtensionContext): void {
             output.appendLine(`- ${smell}`);
           }
           output.show(true);
-          const selection = await vscode.window.showWarningMessage(
-            `${result.detectedSmells.length} test smell(s) detected in ${fileName}.`,
-            'Open Problems',
-          );
-          if (selection === 'Open Problems') {
-            await vscode.commands.executeCommand(
-              'workbench.actions.view.problems',
-            );
-          }
+          void vscode.window
+            .showWarningMessage(
+              `${result.detectedSmells.length} test smell(s) detected in ${fileName}.`,
+              'Open Problems',
+            )
+            .then((selection) => {
+              if (selection === 'Open Problems') {
+                void vscode.commands.executeCommand(
+                  'workbench.actions.view.problems',
+                );
+              }
+            });
         }
       } else {
         reportAutomaticMessage(
@@ -274,7 +277,7 @@ export function activate(context: vscode.ExtensionContext): void {
           output.appendLine(error.stack);
         }
         output.show(true);
-        await vscode.window.showErrorMessage(
+        void vscode.window.showErrorMessage(
           'Test smell analysis failed. See the Test Smell Detector output for details.',
         );
       } else {
@@ -368,8 +371,11 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   const invalidateAfterChange = vscode.workspace.onDidChangeTextDocument(
-    ({ document }) => {
-      if (document.languageId !== 'java') {
+    ({ document, contentChanges }) => {
+      // VS Code can emit this event when only the document's dirty/save state
+      // changes. Ignore those empty events so they do not cancel a scheduled
+      // on-save analysis or invalidate a manual analysis already in progress.
+      if (document.languageId !== 'java' || contentChanges.length === 0) {
         return;
       }
       clearScheduledAnalysis(document);

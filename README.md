@@ -14,14 +14,21 @@ Java file, runs the bundled tsDetect engine, and publishes detected test smells
 to both the **Test Smell Detector** Output panel and VS Code's **Problems**
 panel.
 
+The extension also performs incremental analysis when a Java test file is
+saved. Only the saved test/production pair is analyzed, and only that test
+file's diagnostics are refreshed. Automatic analysis can be disabled with the
+`testSmellDetector.analyzeOnSave` setting.
+
 Each detected smell is represented as a warning diagnostic. Because the
 current tsDetect output reports smells at file level rather than exact source
 locations, the warning is anchored to the Java test class name. VS Code also
 shows a warning squiggle and its standard diagnostic hover at that location.
 
-This first prototype uses tsDetect's existing file-pair input format, so the
-production class must be selected manually. Automatic production-file matching
-is outside the current scope.
+tsDetect uses a test/production file pair. The extension first remembers a
+production file selected during a manual analysis. It can also match common
+names such as `CalculatorTest.java` to `Calculator.java` and prefers files
+under `src/main`. If an automatic run cannot find a match, run **Analyze Current
+File** once and select the production file manually.
 
 ## Requirements
 
@@ -43,6 +50,19 @@ If Java is installed under a different executable path, set
 6. Select the corresponding production Java file when prompted.
 7. Review the detected smells in the **Problems** panel and the detailed run
    summary in the **Test Smell Detector** Output panel.
+8. Modify and save the Java test file. The extension reruns tsDetect after a
+   short delay and replaces that file's diagnostics automatically.
+
+## Incremental analysis
+
+- Runs only for saved local Java test files.
+- Recognizes common test suffixes such as `Test`, `Tests`, `IT`, and `Spec`, as
+  well as Java files under `src/test`.
+- Waits briefly after a save to avoid redundant work.
+- Serializes detector runs for the same file and ignores outdated results.
+- Allows different test files to be analyzed independently.
+- Removes stale diagnostics as soon as a Java file changes.
+- Can be disabled through the `testSmellDetector.analyzeOnSave` setting.
 
 ## Automated checks
 
@@ -69,7 +89,7 @@ npm run package:vsix
 
 ## Prototype limitations
 
-- Analysis runs only when the command is invoked.
-- The production file is selected manually.
+- Production-file matching follows common project and filename conventions;
+  unusual project layouts may require one manual selection.
 - Results are reported at file level, so diagnostics mark the test class rather
   than the exact expression that caused a smell.

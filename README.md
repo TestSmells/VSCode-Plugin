@@ -19,10 +19,11 @@ saved. Only the saved test/production pair is analyzed, and only that test
 file's diagnostics are refreshed. Automatic analysis can be disabled with the
 `testSmellDetector.analyzeOnSave` setting.
 
-Each detected smell is represented as a warning diagnostic. Because the
-current tsDetect output reports smells at file level rather than exact source
-locations, the warning is anchored to the Java test class name. VS Code also
-shows a warning squiggle and its standard diagnostic hover at that location.
+Each detected smell is represented as a warning diagnostic. The extension maps
+engine-confirmed method and class names to their Java declaration ranges. When
+an exact declaration is unavailable, the warning falls back to the test class.
+VS Code also shows a warning squiggle and its standard diagnostic hover at that
+location.
 
 tsDetect uses a test/production file pair. The extension first remembers a
 production file selected during a manual analysis. It can also match common
@@ -32,7 +33,8 @@ File** once and select the production file manually.
 
 ## Requirements
 
-- Java must be installed and available as `java` on the system path.
+- Java 11 or newer must be installed and available as `java` on the system
+  path.
 - The test and production Java files must be saved locally.
 
 If Java is installed under a different executable path, set
@@ -80,6 +82,25 @@ squiggles, hover messages, and result notification on the next analysis. The
 bundled engine still evaluates the file, so changing these preferences does
 not alter tsDetect itself.
 
+## Detector execution and troubleshooting
+
+Each detector process has a 60-second timeout by default. Change
+`testSmellDetector.analysisTimeoutSeconds` in VS Code settings to a value from
+1 through 600 seconds when a larger project needs more time. A process that
+exceeds the limit is stopped so it cannot run indefinitely.
+
+Manual analysis displays cancellable VS Code progress. Select **Cancel** in the
+progress notification to stop Java and clear results from the cancelled run.
+Starting a newer analysis for the same file also stops the older process and
+prevents its results from being published.
+
+Failures and cancellations clear that file's existing diagnostics. The Test
+Smell Detector Output channel records the failure category, executable,
+arguments, timeout, exit code, process signal, and captured standard output and
+error. Missing-Java messages direct the user to install Java 11 or configure
+`testSmellDetector.javaPath`; missing-JAR messages recommend reinstalling from
+a complete VSIX package.
+
 ## Automated checks
 
 The GitHub Actions workflow runs for pull requests targeting `main`, pushes to
@@ -94,12 +115,14 @@ newer:
 npm ci
 npm run check
 npm run compile
+npm run test:preferences
+npm run test:execution
 npm run test:corpus
 npm run package:vsix
 ```
 
-`npm run test:corpus` expects the compiled adapter in `out/`, so run
-`npm run compile` first. The packaging command creates
+The preference, execution-control, and corpus tests expect compiled files in
+`out/`, so run `npm run compile` first. The packaging command creates
 `test-smell-detector.vsix`. In GitHub Actions, that file is retained as the
 `test-smell-detector-vsix` workflow artifact.
 
@@ -107,5 +130,7 @@ npm run package:vsix
 
 - Production-file matching follows common project and filename conventions;
   unusual project layouts may require one manual selection.
-- Results are reported at file level, so diagnostics mark the test class rather
-  than the exact expression that caused a smell.
+- Diagnostics identify the affected method or class when tsDetect provides a
+  confirmed element name. Some findings can only be shown at class or file
+  level because the detector does not report the exact expression that caused
+  the smell.

@@ -1,13 +1,13 @@
-import { execFile } from 'node:child_process';
 import { access, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
-import { promisify } from 'node:util';
 
 import { parseCsv } from './csv';
+import { DetectorExecutionError } from './detectorError';
+import { executeProcess } from './processRunner';
 
-const execFileAsync = promisify(execFile);
 const LOCATION_FORMAT_VERSION = 'TSDETECT_LOCATIONS_V1';
+export const DEFAULT_DETECTOR_TIMEOUT_MILLISECONDS = 60_000;
 
 /** All filesystem and runtime inputs required for one detector invocation. */
 export interface DetectorOptions {
@@ -15,7 +15,9 @@ export interface DetectorOptions {
   jarPath: string;
   javaPath: string;
   productionFilePath: string;
+  signal?: AbortSignal;
   testFilePath: string;
+  timeoutMilliseconds?: number;
 }
 
 /** One-based Java source positions; the ending column is exclusive. */
@@ -52,8 +54,8 @@ export async function runDetector(options: DetectorOptions): Promise<DetectorRes
   );
 
   // Fail before creating temporary files if either bundled JAR is missing.
-  await access(options.jarPath);
-  await access(bridgePath);
+  await assertReadableJar(options.jarPath, 'tsDetect engine');
+  await assertReadableJar(bridgePath, 'source-location bridge');
 
   const temporaryDirectory = await mkdtemp(
     path.join(tmpdir(), 'test-smell-detector-'),
@@ -61,9 +63,9 @@ export async function runDetector(options: DetectorOptions): Promise<DetectorRes
   const outputPath = path.join(temporaryDirectory, 'locations.csv');
 
   try {
-    await execFileAsync(
-      options.javaPath,
-      [
+    await executeProcess({
+      executable: options.javaPath,
+      args: [
         '-cp',
         [bridgePath, options.jarPath].join(path.delimiter),
         'LocationBridge',
@@ -72,20 +74,30 @@ export async function runDetector(options: DetectorOptions): Promise<DetectorRes
         options.productionFilePath,
         outputPath,
       ],
-      {
-        encoding: 'utf8',
-        maxBuffer: 4 * 1024 * 1024,
-        windowsHide: true,
-      },
-    );
+      signal: options.signal,
+      timeoutMilliseconds:
+        options.timeoutMilliseconds ?? DEFAULT_DETECTOR_TIMEOUT_MILLISECONDS,
+    });
 
-    const rows = parseCsv(await readFile(outputPath, 'utf8'));
+    let rows: string[][];
+    try {
+      rows = parseCsv(await readFile(outputPath, 'utf8'));
+    } catch (cause: unknown) {
+      throw invalidOutputError(
+        'The detector did not produce a readable result file. Reinstall the extension if this continues.',
+        outputPath,
+        cause,
+      );
+    }
     if (
       rows.length === 0 ||
       rows[0].length !== 2 ||
       rows[0][0] !== LOCATION_FORMAT_VERSION
     ) {
-      throw new Error('tsDetect returned an unexpected location format.');
+      throw invalidOutputError(
+        'The detector returned an unsupported result format. Reinstall or update the extension.',
+        outputPath,
+      );
     }
 
     const numberOfTestMethods = Number(rows[0][1]);
@@ -93,10 +105,22 @@ export async function runDetector(options: DetectorOptions): Promise<DetectorRes
       !Number.isSafeInteger(numberOfTestMethods) ||
       numberOfTestMethods < 0
     ) {
-      throw new Error('tsDetect returned an invalid test method count.');
+      throw invalidOutputError(
+        'The detector returned an invalid test method count.',
+        outputPath,
+      );
     }
 
-    const parsedFindings = rows.slice(1).map(parseFinding);
+    let parsedFindings: DetectorFinding[];
+    try {
+      parsedFindings = rows.slice(1).map(parseFinding);
+    } catch (cause: unknown) {
+      throw invalidOutputError(
+        'The detector returned malformed finding details. Reinstall or update the extension if this continues.',
+        outputPath,
+        cause,
+      );
+    }
     const findings = [
       ...new Map(
         parsedFindings.map((finding) => [findingKey(finding), finding]),
@@ -112,6 +136,43 @@ export async function runDetector(options: DetectorOptions): Promise<DetectorRes
   } finally {
     await rm(temporaryDirectory, { force: true, recursive: true });
   }
+}
+
+async function assertReadableJar(
+  jarPath: string,
+  description: string,
+): Promise<void> {
+  try {
+    await access(jarPath);
+  } catch (cause: unknown) {
+    const causeMessage =
+      cause instanceof Error ? cause.message : String(cause);
+    throw new DetectorExecutionError(
+      'missing-jar',
+      `The bundled ${description} JAR is missing or unreadable. Reinstall the extension from a complete VSIX package.`,
+      `Required JAR: ${jarPath}\nFilesystem error: ${causeMessage}`,
+      { cause },
+    );
+  }
+}
+
+function invalidOutputError(
+  message: string,
+  outputPath: string,
+  cause?: unknown,
+): DetectorExecutionError {
+  const causeMessage =
+    cause === undefined
+      ? '(none)'
+      : cause instanceof Error
+        ? cause.message
+        : String(cause);
+  return new DetectorExecutionError(
+    'invalid-output',
+    message,
+    `Expected result file: ${outputPath}\nRead/parse error: ${causeMessage}`,
+    cause === undefined ? undefined : { cause },
+  );
 }
 
 function findingKey(finding: DetectorFinding): string {

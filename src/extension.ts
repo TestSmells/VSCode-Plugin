@@ -6,8 +6,14 @@ import {
   isLikelyJavaTestDocument,
   ProductionFileResolver,
 } from './productionFileResolver';
+import { DetectorExecutionError } from './detectorError';
 import { isSmellEnabled } from './smellPreferences';
-import { DetectorFinding, runDetector } from './testSmellDetector';
+import {
+  DEFAULT_DETECTOR_TIMEOUT_MILLISECONDS,
+  DetectorFinding,
+  DetectorResult,
+  runDetector,
+} from './testSmellDetector';
 
 const ANALYZE_CURRENT_FILE_COMMAND = 'testSmellDetector.analyzeCurrentFile';
 const DIAGNOSTIC_SOURCE = 'Test Smell Detector';
@@ -124,6 +130,7 @@ export function activate(context: vscode.ExtensionContext): void {
   >();
   const analysisGenerations = new Map<string, number>();
   const analysisQueues = new Map<string, Promise<void>>();
+  const activeAnalysisControllers = new Map<string, AbortController>();
 
   const documentKey = (document: vscode.TextDocument): string =>
     document.uri.toString();
@@ -132,8 +139,11 @@ export function activate(context: vscode.ExtensionContext): void {
     analysisGenerations.get(documentKey(document)) ?? 0;
 
   const nextGeneration = (document: vscode.TextDocument): number => {
+    const key = documentKey(document);
+    activeAnalysisControllers.get(key)?.abort();
+    diagnostics.delete(document.uri);
     const generation = getGeneration(document) + 1;
-    analysisGenerations.set(documentKey(document), generation);
+    analysisGenerations.set(key, generation);
     return generation;
   };
 
@@ -219,11 +229,19 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
 
-      diagnostics.delete(document.uri);
       const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
-      const javaPath = vscode.workspace
-        .getConfiguration('testSmellDetector', document.uri)
-        .get<string>('javaPath', 'java');
+      const configuration = vscode.workspace.getConfiguration(
+        'testSmellDetector',
+        document.uri,
+      );
+      const javaPath = configuration.get<string>('javaPath', 'java');
+      const timeoutSeconds = configuration.get<number>(
+        'analysisTimeoutSeconds',
+        DEFAULT_DETECTOR_TIMEOUT_MILLISECONDS / 1_000,
+      );
+      const controller = new AbortController();
+      const key = documentKey(document);
+      activeAnalysisControllers.set(key, controller);
       const run = () =>
         runDetector({
           applicationName:
@@ -232,17 +250,40 @@ export function activate(context: vscode.ExtensionContext): void {
           javaPath,
           jarPath: context.asAbsolutePath('detector/tsdetect.jar'),
           productionFilePath,
+          signal: controller.signal,
           testFilePath: document.fileName,
+          timeoutMilliseconds: timeoutSeconds * 1_000,
         });
-      const result = request.interactive
-        ? await vscode.window.withProgress(
-            {
-              location: vscode.ProgressLocation.Notification,
-              title: `Analyzing ${fileName} for test smells...`,
-            },
-            run,
-          )
-        : await run();
+      let result: DetectorResult;
+      try {
+        result = request.interactive
+          ? await vscode.window.withProgress(
+              {
+                cancellable: true,
+                location: vscode.ProgressLocation.Notification,
+                title: `Analyzing ${fileName} for test smells...`,
+              },
+              async (_progress, cancellationToken) => {
+                const cancellationSubscription =
+                  cancellationToken.onCancellationRequested(() => {
+                    controller.abort();
+                  });
+                if (cancellationToken.isCancellationRequested) {
+                  controller.abort();
+                }
+                try {
+                  return await run();
+                } finally {
+                  cancellationSubscription.dispose();
+                }
+              },
+            )
+          : await run();
+      } finally {
+        if (activeAnalysisControllers.get(key) === controller) {
+          activeAnalysisControllers.delete(key);
+        }
+      }
 
       if (
         !isCurrentRequest(
@@ -349,22 +390,61 @@ export function activate(context: vscode.ExtensionContext): void {
 
       diagnostics.delete(document.uri);
       const message = error instanceof Error ? error.message : String(error);
+      const technicalDetails =
+        error instanceof DetectorExecutionError
+          ? error.technicalDetails
+          : error instanceof Error
+            ? error.stack ?? error.message
+            : String(error);
 
       if (request.interactive) {
         output.clear();
-        output.appendLine('Test Smell Detector failed');
-        output.appendLine('==========================');
-        output.appendLine(message);
-        if (error instanceof Error && error.stack) {
-          output.appendLine('');
-          output.appendLine(error.stack);
-        }
-        output.show(true);
-        void vscode.window.showErrorMessage(
-          'Test smell analysis failed. See the Test Smell Detector output for details.',
+        const cancelled =
+          error instanceof DetectorExecutionError &&
+          error.kind === 'cancelled';
+        output.appendLine(
+          cancelled
+            ? 'Test Smell Detector cancelled'
+            : 'Test Smell Detector failed',
         );
+        output.appendLine(
+          cancelled
+            ? '============================='
+            : '==========================',
+        );
+        if (error instanceof DetectorExecutionError) {
+          output.appendLine(`Failure type: ${error.kind}`);
+        }
+        output.appendLine(message);
+        output.appendLine('');
+        output.appendLine('Technical details');
+        output.appendLine('-----------------');
+        output.appendLine(technicalDetails);
+        output.show(true);
+        if (cancelled) {
+          void vscode.window.showInformationMessage(
+            `Test smell analysis cancelled for ${fileName}.`,
+          );
+        } else {
+          const canOpenSettings =
+            error instanceof DetectorExecutionError &&
+            (error.kind === 'missing-executable' || error.kind === 'timeout');
+          const actions = canOpenSettings ? ['Open Settings'] : [];
+          void vscode.window
+            .showErrorMessage(message, ...actions)
+            .then((selection) => {
+              if (selection === 'Open Settings') {
+                void vscode.commands.executeCommand(
+                  'workbench.action.openSettings',
+                  '@ext:testsmells.test-smell-detector',
+                );
+              }
+            });
+        }
       } else {
         reportAutomaticMessage(`Analysis failed for ${fileName}: ${message}`);
+        output.appendLine('Technical details:');
+        output.appendLine(technicalDetails);
       }
     }
   };
@@ -485,6 +565,10 @@ export function activate(context: vscode.ExtensionContext): void {
         clearTimeout(timer);
       }
       scheduledAnalyses.clear();
+      for (const controller of activeAnalysisControllers.values()) {
+        controller.abort();
+      }
+      activeAnalysisControllers.clear();
       for (const [key, generation] of analysisGenerations) {
         analysisGenerations.set(key, generation + 1);
       }
@@ -503,6 +587,9 @@ export function activate(context: vscode.ExtensionContext): void {
       dispose: () => {
         for (const timer of scheduledAnalyses.values()) {
           clearTimeout(timer);
+        }
+        for (const controller of activeAnalysisControllers.values()) {
+          controller.abort();
         }
       },
     },

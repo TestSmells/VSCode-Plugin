@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   validate:
-    name: Type-check, corpus, and VSIX
+    name: Type-check, tests, and VSIX
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -49,6 +49,9 @@ jobs:
 
       - name: Test smell preferences
         run: npm run test:preferences
+
+      - name: Test detector execution controls
+        run: npm run test:execution
 
       - name: Compare regression corpus
         run: npm run test:corpus

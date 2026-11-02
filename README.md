@@ -64,6 +64,22 @@ If Java is installed under a different executable path, set
 - Removes stale diagnostics as soon as a Java file changes.
 - Can be disabled through the `testSmellDetector.analyzeOnSave` setting.
 
+## Choose reported smells
+
+Every supported smell is enabled by default. To choose which findings the
+extension reports:
+
+1. Open VS Code **Settings**.
+2. Search for **Test Smell Detector**.
+3. Under **Test Smell Detector > Smells**, check or clear individual smells.
+4. Run **Analyze Current File** again, or save the test file when incremental
+   analysis is enabled.
+
+Disabled smells are filtered from the Problems panel, Output panel, editor
+squiggles, hover messages, and result notification on the next analysis. The
+bundled engine still evaluates the file, so changing these preferences does
+not alter tsDetect itself.
+
 ## Automated checks
 
 The GitHub Actions workflow runs for pull requests targeting `main`, pushes to

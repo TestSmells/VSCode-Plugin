@@ -6,6 +6,7 @@ import {
   isLikelyJavaTestDocument,
   ProductionFileResolver,
 } from './productionFileResolver';
+import { isSmellEnabled } from './smellPreferences';
 import { DetectorFinding, runDetector } from './testSmellDetector';
 
 const ANALYZE_CURRENT_FILE_COMMAND = 'testSmellDetector.analyzeCurrentFile';
@@ -258,15 +259,36 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
 
-      if (result.detectedSmells.length === 0) {
+      const reportingConfiguration = vscode.workspace.getConfiguration(
+        'testSmellDetector',
+        document.uri,
+      );
+      const reportedFindings = result.findings.filter((finding) =>
+        isSmellEnabled(finding.name, (settingKey) =>
+          reportingConfiguration.get<boolean>(
+            `smells.${settingKey}`,
+            true,
+          ),
+        ),
+      );
+      const reportedSmells = result.detectedSmells.filter((smellName) =>
+        isSmellEnabled(smellName, (settingKey) =>
+          reportingConfiguration.get<boolean>(
+            `smells.${settingKey}`,
+            true,
+          ),
+        ),
+      );
+
+      if (reportedSmells.length === 0) {
         diagnostics.delete(document.uri);
       } else {
         diagnostics.set(
           document.uri,
           createDiagnostics(
             document,
-            result.findings,
-            result.detectedSmells,
+            reportedFindings,
+            reportedSmells,
           ),
         );
       }
@@ -280,22 +302,22 @@ export function activate(context: vscode.ExtensionContext): void {
         output.appendLine(`Test methods: ${result.numberOfTestMethods}`);
         output.appendLine('');
 
-        if (result.detectedSmells.length === 0) {
-          output.appendLine('No test smells detected.');
+        if (reportedSmells.length === 0) {
+          output.appendLine('No enabled test smells reported.');
           output.show(true);
           void vscode.window.showInformationMessage(
-            `No test smells detected in ${fileName}.`,
+            `No enabled test smells reported in ${fileName}.`,
           );
         } else {
           output.appendLine(
-            `Detected smells (${result.detectedSmells.length}):`,
+            `Detected smells (${reportedSmells.length}):`,
           );
-          for (const smell of result.detectedSmells) {
+          for (const smell of reportedSmells) {
             output.appendLine(`- ${smell}`);
           }
           output.appendLine('');
-          output.appendLine(`Mapped findings (${result.findings.length}):`);
-          for (const finding of result.findings) {
+          output.appendLine(`Mapped findings (${reportedFindings.length}):`);
+          for (const finding of reportedFindings) {
             const mappedElement = finding.location
               ? `${finding.scope} ${finding.elementName} at line ${finding.location.startLine}`
               : 'file level (exact declaration unavailable)';
@@ -304,7 +326,7 @@ export function activate(context: vscode.ExtensionContext): void {
           output.show(true);
           void vscode.window
             .showWarningMessage(
-              `${result.findings.length} test smell finding(s) detected in ${fileName}.`,
+              `${reportedFindings.length} test smell finding(s) detected in ${fileName}.`,
               'Open Problems',
             )
             .then((selection) => {
@@ -317,7 +339,7 @@ export function activate(context: vscode.ExtensionContext): void {
         }
       } else {
         reportAutomaticMessage(
-          `${fileName}: ${result.numberOfTestMethods} test method(s), ${result.findings.length} smell finding(s).`,
+          `${fileName}: ${result.numberOfTestMethods} test method(s), ${reportedFindings.length} enabled smell finding(s).`,
         );
       }
     } catch (error: unknown) {

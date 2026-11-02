@@ -4,6 +4,7 @@ src/**
 scripts/**
 java/**
 regression-corpus/**
+test/**
 .gitignore
 tsconfig.json
 package-lock.json

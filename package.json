@@ -45,6 +45,132 @@
           "type": "boolean",
           "default": true,
           "description": "Automatically analyze saved Java test files and refresh their diagnostics."
+        },
+        "testSmellDetector.smells.assertionRoulette": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Report Assertion Roulette findings."
+        },
+        "testSmellDetector.smells.conditionalTestLogic": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Report Conditional Test Logic findings."
+        },
+        "testSmellDetector.smells.constructorInitialization": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Report Constructor Initialization findings."
+        },
+        "testSmellDetector.smells.defaultTest": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Report Default Test findings."
+        },
+        "testSmellDetector.smells.dependentTest": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Report Dependent Test findings."
+        },
+        "testSmellDetector.smells.duplicateAssert": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Report Duplicate Assert findings."
+        },
+        "testSmellDetector.smells.eagerTest": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Report Eager Test findings."
+        },
+        "testSmellDetector.smells.emptyTest": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Report Empty Test findings."
+        },
+        "testSmellDetector.smells.exceptionCatchingThrowing": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Report Exception Catching Throwing findings."
+        },
+        "testSmellDetector.smells.generalFixture": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Report General Fixture findings."
+        },
+        "testSmellDetector.smells.ignoredTest": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Report Ignored Test findings."
+        },
+        "testSmellDetector.smells.lazyTest": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Report Lazy Test findings."
+        },
+        "testSmellDetector.smells.magicNumberTest": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Report Magic Number Test findings."
+        },
+        "testSmellDetector.smells.mysteryGuest": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Report Mystery Guest findings."
+        },
+        "testSmellDetector.smells.redundantAssertion": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Report Redundant Assertion findings."
+        },
+        "testSmellDetector.smells.redundantPrint": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Report Redundant Print findings."
+        },
+        "testSmellDetector.smells.resourceOptimism": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Report Resource Optimism findings."
+        },
+        "testSmellDetector.smells.sensitiveEquality": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Report Sensitive Equality findings."
+        },
+        "testSmellDetector.smells.sleepyTest": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Report Sleepy Test findings."
+        },
+        "testSmellDetector.smells.unknownTest": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Report Unknown Test findings."
+        },
+        "testSmellDetector.smells.verboseTest": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Report Verbose Test findings."
         }
       }
     }
@@ -55,6 +181,7 @@
     "compile": "npm run clean && tsc -p ./",
     "watch": "tsc -watch -p ./",
     "check": "tsc --noEmit -p ./",
+    "test:preferences": "node --test test/smell-preferences.test.js",
     "test:corpus": "node scripts/run-regression-corpus.js",
     "package:vsix": "vsce package --out test-smell-detector.vsix"
   },

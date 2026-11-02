@@ -47,6 +47,9 @@ jobs:
       - name: Compile extension
         run: npm run compile
 
+      - name: Test smell preferences
+        run: npm run test:preferences
+
       - name: Compare regression corpus
         run: npm run test:corpus
 
